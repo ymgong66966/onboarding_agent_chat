@@ -1,0 +1,78 @@
+replicaCount: 1
+
+serviceAccount:
+  name: "onboarding-agent-sa"
+
+image:
+  repository: ghcr.io/ymgong66966/onboarding_agent_chat
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8001
+
+app:
+  host: "0.0.0.0"
+  logLevel: "INFO"
+  # The LangGraph API where the onboarding agent graph runs
+  langgraphUrl: "http://onboarding-langgraph.onboarding-agent.svc.cluster.local:2024"
+  # The WithCare agent internal endpoint for /onboarding/ingest (K8s service DNS)
+  withcareAgentUrl: "http://withcare-agent-prod.withcare-agent.svc.cluster.local:80"
+  # The browser-facing WithCare chat URL (ELB or external URL shown to the user)
+  withcareChatUrl: ""  # Set to the WithCare ELB DNS, e.g. http://<elb-id>.us-east-2.elb.amazonaws.com
+  extraEnv: []
+  secrets:
+    enabled: true
+    name: "onboarding-agent-keys"
+
+resources:
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+
+healthcheck:
+  liveness:
+    path: "/health"
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: "/health"
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+  startup:
+    path: "/health"
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 6
+
+securityContext:
+  enabled: true
+
+ingress:
+  enabled: false
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+podAnnotations: {}
+
+podLabels: {}

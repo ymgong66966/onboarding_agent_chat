@@ -1,0 +1,80 @@
+# Development configuration for onboarding-agent-chat
+replicaCount: 1
+
+serviceAccount:
+  name: "default"
+
+image:
+  repository: ghcr.io/ymgong66966/onboarding_agent_chat
+  tag: develop
+  pullPolicy: Always
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8001
+
+app:
+  host: "0.0.0.0"
+  logLevel: "DEBUG"
+  # Point to local/dev LangGraph server
+  langgraphUrl: "http://localhost:2024"
+  # Point to dev WithCare agent (internal for API calls)
+  withcareAgentUrl: "http://withcare-agent-dev.withcare-agent-dev.svc.cluster.local:80"
+  # Browser-facing WithCare URL (set to ELB DNS or leave empty to use withcareAgentUrl)
+  withcareChatUrl: ""
+  extraEnv: []
+  secrets:
+    enabled: true
+    name: "onboarding-agent-keys"
+
+resources:
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+
+healthcheck:
+  liveness:
+    path: "/health"
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: "/health"
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+  startup:
+    path: "/health"
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 6
+
+securityContext:
+  enabled: true
+
+ingress:
+  enabled: false
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+podAnnotations: {}
+
+podLabels:
+  environment: "development"

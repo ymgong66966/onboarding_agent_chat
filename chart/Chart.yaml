@@ -1,0 +1,6 @@
+apiVersion: v2
+name: onboarding-agent-chat
+description: Onboarding Agent Chat Server — browser UI for testing the onboarding flow
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
