@@ -37,10 +37,19 @@ _logger = logging.getLogger(__name__)
 # ── Config ────────────────────────────────────────────────────────────
 
 LANGGRAPH_URL = os.getenv("LANGGRAPH_URL", "http://localhost:2024")
+LANGGRAPH_API_KEY = os.getenv("LANGSMITH_API_KEY", "")  # LangGraph Cloud uses LangSmith API key
 GRAPH_NAME = os.getenv("ONBOARDING_GRAPH_NAME", "onboarding_agent")
 WITHCARE_AGENT_URL = os.getenv("WITHCARE_AGENT_URL", "http://localhost:8000")
 # The browser-facing URL for the WithCare chat UI (may differ from internal API URL)
 WITHCARE_CHAT_URL = os.getenv("WITHCARE_CHAT_URL", WITHCARE_AGENT_URL)
+
+
+def _langgraph_headers() -> dict:
+    """Build auth headers for LangGraph API requests."""
+    headers = {"Content-Type": "application/json"}
+    if LANGGRAPH_API_KEY:
+        headers["x-api-key"] = LANGGRAPH_API_KEY
+    return headers
 
 # ── App setup ─────────────────────────────────────────────────────────
 
@@ -78,25 +87,25 @@ DEFAULT_CARE_RECIPIENT = {
 async def _create_thread() -> str:
     """Create a new LangGraph thread and return its thread_id."""
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(f"{LANGGRAPH_URL}/threads", json={})
+        resp = await client.post(
+            f"{LANGGRAPH_URL}/threads",
+            json={},
+            headers=_langgraph_headers(),
+        )
         resp.raise_for_status()
         return resp.json()["thread_id"]
 
 
 async def _invoke_graph(thread_id: str, state: dict) -> dict:
     """Invoke the onboarding graph with the given state."""
-    payload = {
-        "input": state,
-        "config": {"configurable": {"thread_id": thread_id}},
-    }
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
-            f"{LANGGRAPH_URL}/runs/wait",
+            f"{LANGGRAPH_URL}/threads/{thread_id}/runs/wait",
             json={
                 "assistant_id": GRAPH_NAME,
                 "input": state,
-                "config": {"configurable": {"thread_id": thread_id}},
             },
+            headers=_langgraph_headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -107,6 +116,7 @@ async def _get_state(thread_id: str) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(
             f"{LANGGRAPH_URL}/threads/{thread_id}/state",
+            headers=_langgraph_headers(),
         )
         resp.raise_for_status()
         return resp.json()

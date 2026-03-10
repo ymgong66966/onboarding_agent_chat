@@ -128,6 +128,7 @@ jobs:
         kubectl create namespace onboarding-agent-dev --dry-run=client -o yaml | kubectl apply -f -
         kubectl create secret generic onboarding-agent-keys \
           --from-literal=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+          --from-literal=LANGSMITH_API_KEY="${{ secrets.LANGSMITH_API_KEY }}" \
           --namespace onboarding-agent-dev \
           --dry-run=client -o yaml | kubectl apply -f -
         echo "Kubernetes secrets created/updated successfully"
@@ -217,6 +218,7 @@ jobs:
           --dry-run=client -o yaml | kubectl apply -f -
         kubectl create secret generic onboarding-agent-keys \
           --from-literal=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+          --from-literal=LANGSMITH_API_KEY="${{ secrets.LANGSMITH_API_KEY }}" \
           --namespace onboarding-agent \
           --dry-run=client -o yaml | kubectl apply -f -
         echo "Kubernetes secrets created/updated successfully"
