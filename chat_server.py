@@ -128,6 +128,7 @@ async def _send_to_withcare(
     tasks: list,
     assessment_score: Optional[int],
     assessment_answer: Optional[list],
+    chat_history: Optional[list] = None,
 ) -> dict:
     """Send onboarding data to WithCare's /onboarding/ingest endpoint."""
     relationship = care_recipient.get("relationship", "")
@@ -153,6 +154,28 @@ async def _send_to_withcare(
         if answers:
             assessment_answers = answers
 
+    # Extract structured Q&A pairs from chat_history
+    # chat_history contains AIMessage/HumanMessage pairs where
+    # HumanMessage.content is the PARSED option (e.g., "Yes", "No")
+    tree_qa_pairs = None
+    if chat_history:
+        pairs = []
+        i = 0
+        while i < len(chat_history) - 1:
+            ai_msg = chat_history[i]
+            human_msg = chat_history[i + 1]
+            ai_content = ai_msg.get("content", "") if isinstance(ai_msg, dict) else getattr(ai_msg, "content", str(ai_msg))
+            ai_type = ai_msg.get("type", "") if isinstance(ai_msg, dict) else getattr(ai_msg, "type", "")
+            human_content = human_msg.get("content", "") if isinstance(human_msg, dict) else getattr(human_msg, "content", str(human_msg))
+            human_type = human_msg.get("type", "") if isinstance(human_msg, dict) else getattr(human_msg, "type", "")
+            if ai_type in ("ai", "AIMessage") and human_type in ("human", "HumanMessage"):
+                pairs.append({"question": ai_content, "answer": human_content})
+                i += 2
+            else:
+                i += 1
+        if pairs:
+            tree_qa_pairs = pairs
+
     payload = {
         "user_id": user_id,
         "care_recipients": [
@@ -161,6 +184,7 @@ async def _send_to_withcare(
         "assessment_score": assessment_score,
         "assessment_answers": assessment_answers,
         "tasks": tasks if tasks else None,
+        "tree_qa_pairs": tree_qa_pairs,
     }
 
     _logger.info(f"Sending onboarding ingest to {WITHCARE_AGENT_URL}: {json.dumps(payload, indent=2)[:500]}")
@@ -282,12 +306,14 @@ async def chat(req: ChatRequest):
         ingest_result = None
         if completed:
             session_data = _sessions.get(session_id, {})
+            chat_history = result.get("chat_history", [])
             ingest_result = await _send_to_withcare(
                 user_id=user_id,
                 care_recipient=session_data.get("care_recipient", care_recipient),
                 tasks=tasks,
                 assessment_score=assessment_score,
                 assessment_answer=assessment_answer,
+                chat_history=chat_history,
             )
             debug["withcare_ingest"] = ingest_result
 
