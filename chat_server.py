@@ -24,6 +24,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import uuid
+from datetime import datetime, timedelta
+
+import boto3
+from boto3.dynamodb.conditions import Key
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,6 +47,11 @@ GRAPH_NAME = os.getenv("ONBOARDING_GRAPH_NAME", "onboarding_agent")
 WITHCARE_AGENT_URL = os.getenv("WITHCARE_AGENT_URL", "http://localhost:8000")
 # The browser-facing URL for the WithCare chat UI (may differ from internal API URL)
 WITHCARE_CHAT_URL = os.getenv("WITHCARE_CHAT_URL", WITHCARE_AGENT_URL)
+
+# ── DDB config for greeting message writes ──
+CHAT_MESSAGES_TABLE = os.getenv("CHAT_MESSAGES_TABLE", "ChatMessages")
+USER_CONVERSATION_TABLE = os.getenv("USER_CONVERSATION_TABLE", "WithCare_UserConversationTable")
+AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
 
 
 def _langgraph_headers() -> dict:
@@ -120,6 +130,80 @@ async def _get_state(thread_id: str) -> dict:
         )
         resp.raise_for_status()
         return resp.json()
+
+
+async def _write_greeting_to_ddb(user_id: str, greeting_text: str) -> None:
+    """Write the onboarding greeting to ChatMessages + WithCare_UserConversationTable."""
+    if not user_id or not greeting_text:
+        return
+
+    try:
+        ddb = boto3.resource("dynamodb", region_name=AWS_REGION)
+    except Exception as e:
+        _logger.error(f"Failed to create DDB resource for greeting: {e}")
+        return
+
+    now_iso = datetime.utcnow().isoformat()
+    today = now_iso[:10]
+    msg_id = f"msg_greeting_{uuid.uuid4().hex[:12]}"
+
+    # Look up user's latest conversation_id
+    conv_id = None
+    try:
+        conv_table = ddb.Table(USER_CONVERSATION_TABLE)
+        for day_offset in range(7):
+            date_str = (datetime.utcnow() - timedelta(days=day_offset)).strftime("%Y-%m-%d")
+            result = conv_table.query(
+                IndexName="GSI1",
+                KeyConditionExpression=Key("gsi1pk").eq(f"USER#{user_id}#DATE#{date_str}"),
+                ScanIndexForward=False,
+                Limit=1,
+                ProjectionExpression="conversation_id",
+            )
+            if result.get("Items"):
+                conv_id = result["Items"][0].get("conversation_id")
+                break
+    except Exception as e:
+        _logger.warning(f"Failed to look up conversation_id for greeting: {e}")
+
+    if not conv_id:
+        conv_id = str(uuid.uuid4())
+        _logger.info(f"No existing conversation found for greeting, created conv_id: {conv_id}")
+
+    # Write to ChatMessages
+    try:
+        ddb.Table(CHAT_MESSAGES_TABLE).put_item(Item={
+            "user_Id": user_id,
+            "sort_key": f"{now_iso}#{msg_id}",
+            "chat_Id": conv_id,
+            "role": "assistant",
+            "text": greeting_text,
+            "message_Id": msg_id,
+            "dateSent": now_iso,
+        })
+        _logger.info(f"Greeting written to ChatMessages for {user_id}")
+    except Exception as e:
+        _logger.error(f"ChatMessages greeting write failed: {e}")
+
+    # Write to WithCare_UserConversationTable
+    try:
+        ddb.Table(USER_CONVERSATION_TABLE).put_item(Item={
+            "pk": f"CONV#{conv_id}",
+            "sk": f"MSG#{now_iso}#{msg_id}",
+            "gsi1pk": f"USER#{user_id}#DATE#{today}",
+            "gsi1sk": f"MSG#{now_iso}#{msg_id}",
+            "entity": "message",
+            "conversation_id": conv_id,
+            "user_id": user_id,
+            "role": "assistant",
+            "content": greeting_text,
+            "message_id": msg_id,
+            "timestamp": now_iso,
+            "metadata": {"source": "onboarding_greeting"},
+        })
+        _logger.info(f"Greeting written to UserConversationTable for {user_id}")
+    except Exception as e:
+        _logger.error(f"UserConversationTable greeting write failed: {e}")
 
 
 async def _send_to_withcare(
@@ -302,7 +386,7 @@ async def chat(req: ChatRequest):
             "assessment_score": assessment_score,
         }
 
-        # ── If onboarding complete, send to WithCare ──
+        # ── If onboarding complete, send to WithCare + write greeting ──
         ingest_result = None
         if completed:
             session_data = _sessions.get(session_id, {})
@@ -316,6 +400,16 @@ async def chat(req: ChatRequest):
                 chat_history=chat_history,
             )
             debug["withcare_ingest"] = ingest_result
+
+            # Write greeting message to DDB (ChatMessages + UserConversationTable)
+            greeting_message = result.get("greeting_message")
+            if greeting_message:
+                try:
+                    await _write_greeting_to_ddb(user_id, greeting_message)
+                    debug["greeting_written"] = True
+                except Exception as e:
+                    _logger.error(f"Greeting DDB write failed: {e}")
+                    debug["greeting_written"] = False
 
         return {
             "reply": question,
